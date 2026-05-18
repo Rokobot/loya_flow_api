@@ -1,19 +1,18 @@
-# 🚀 Loya User Registration — Backend API Flow & Requests Spec
+# 🚀 Loya Mobil Tətbiqi — Müştəri Auth (Qeydiyyat, Giriş & Şifrə) API Spesifikasiyası
 
-Bu sənəd **Loya** mobil tətbiqinin müştəri tərəfi üçün qeydiyyat axışını (flow) və backend serverə göndəriləcək sorğu (Request) JSON modellərini əhatə edir.
+Bu sənəd **Loya** mobil tətbiqində **standart istifadəçinin (müştərinin)** qeydiyyat, giriş, PIN kod təyini, şifrə sıfırlama (unutdum) və tətbiq daxilindən cari şifrəni dəyişmə (change password) axışlarını və müvafiq **Sorğu (Request) JSON** modellərini tam və aydın şəkildə əhatə edir.
 
 ---
 
-## 1. 🔄 Qeydiyyat API Ardıcıllıq Diaqramı (Sequence Flow)
+## 🔄 BÖLMƏ 1: ARDICILLIQ DİAQRAMLARI (SEQUENCE FLOWS)
 
-Backend proqramçınızın API-lər arasındakı məntiqi əlaqəni və sessiya idarəetməsini anlaması üçün ardıcıllıq diaqramı:
-
+### AXISH 1: Yeni İstifadəçi Qeydiyyatı (Registration)
 ```mermaid
 sequenceDiagram
     autonumber
-    actor App as Mobil Tətbiq (Frontend)
+    actor App as Mobil Tətbiq (Müştəri)
     participant BE as Backend API (Server)
-    participant SMS as SMS Gateway (Məs: Twilio, Infobip)
+    participant SMS as SMS Gateway
 
     %% Step 1: Send OTP
     Note over App, BE: STEP 1: OTP SMS Sorğusu
@@ -37,59 +36,95 @@ sequenceDiagram
     Note over App, BE: STEP 3: Şəxsi Məlumatlar və Şifrənin Yazılması
     App->{BE}: POST /api/auth/register/complete (application/json)
     Note right of App: Request: { verification_token, name, surname, gender, birthdate, password }
-    alt Məlumatlar və Token Uğurludur
-        BE-->>App: Response: 201 Created { success, access_token, user_profile }
-    else Token köhnəlib və ya Şifrə zəifdir
-        BE-->>App: Response: 400 Bad Request { success, error_code }
+    BE-->>App: Response: 201 Created { success, access_token, user_profile }
+```
+
+### AXISH 2: Giriş (Login) & PIN Girişi
+```mermaid
+sequenceDiagram
+    autonumber
+    actor App as Mobil Tətbiq (Müştəri)
+    participant BE as Backend API (Server)
+
+    %% Flow 1: Password Login
+    rect rgb(240, 248, 255)
+        Note over App, BE: AXISH 2.1: Standart Şifrə ilə Giriş
+        App->{BE}: POST /api/auth/login (application/json)
+        Note right of App: Request: { phone_number, password }
+        BE-->>App: Response: 200 OK { success, access_token, user_profile }
     end
 
-    %% Step 4: PIN Code Setup
-    Note over App, BE: STEP 4: Sürətli Giriş üçün PIN Təyini (Optional)
-    App->{BE}: POST /api/auth/login/pin (application/json)
-    Note right of App: Request: { phone_number, pin_code }
-    BE-->>App: Response: 200 OK { success, access_token, user_profile }
+    %% Flow 2: PIN Login
+    rect rgb(255, 240, 245)
+        Note over App, BE: AXISH 2.2: Sürətli PIN Kod ilə Giriş / Təyini
+        App->{BE}: POST /api/auth/login/pin (application/json)
+        Note right of App: Request: { phone_number, pin_code }
+        BE-->>App: Response: 200 OK { success, access_token, user_profile }
+    end
+```
+
+### AXISH 3: Şifrənin İdarə Edilməsi (Unutdum & Sıfırlama)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor App as Mobil Tətbiq (Müştəri)
+    participant BE as Backend API (Server)
+    participant SMS as SMS Gateway
+
+    %% Forgot Flow
+    rect rgb(245, 255, 250)
+        Note over App, BE: AXISH 3.1: Şifrəni Unutdum (Giriş Ekranında)
+        App->{BE}: POST /api/auth/password/forgot (application/json)
+        Note right of App: Request: { phone_number }
+        BE-->>SMS: OTP SMS Kod göndər
+        SMS-->>App: 6 rəqəmli OTP çatır (məs: 654321)
+        BE-->>App: Response: 200 OK { success, expires_in }
+
+        App->{BE}: POST /api/auth/password/verify (application/json)
+        Note right of App: Request: { phone_number, otp_code }
+        BE-->>App: Response: 200 OK { success, verification_token }
+
+        App->{BE}: POST /api/auth/password/reset (application/json)
+        Note right of App: Request: { verification_token, new_password }
+        BE-->>App: Response: 200 OK { success, message }
+    end
+
+    %% Change Flow
+    rect rgb(255, 250, 240)
+        Note over App, BE: AXISH 3.2: Daxildən Şifrə Dəyişmə (Ayarlar - SetPasswordScreen)
+        App->{BE}: POST /api/auth/password/change (application/json)
+        Note right of App: Headers: Authorization Bearer access_token<br>Request: { current_password, new_password }
+        BE-->>App: Response: 200 OK { success, message }
+    end
 ```
 
 ---
 
-## 2. 📝 API Request JSON Modelləri & Uç Nöqtələri (Endpoints)
+## 📝 BÖLMƏ 2: API REQUEST JSON MODELLƏRİ & ENDPOINTS
 
 Bütün sorğuların (Requests) göndərilmə formatı `Content-Type: application/json` olmalıdır.
 
-### Addım 1: OTP Sorğusu (Mobil nömrənin daxil edilməsi)
+### 1. 📝 QEYDİYYAT (REGISTER) SORĞULARI
+
+#### A. OTP SMS Sorğusu (Mərhələ 1)
 * **Endpoint:** `POST /api/auth/register/send-otp`
-* **Məqsəd:** İstifadəçinin daxil etdiyi mobil nömrəyə SMS doğrulama kodu göndərmək.
-* **Sorğu JSON Model:**
 ```json
 {
   "phone_number": "+994519876543"
 }
 ```
-* **Request Parametrləri:**
-  * `phone_number` *(String / Mütləqdir)*: Beynəlxalq formatda (E.164 standartı, məsələn: `+994XXXXXXXXX`) istifadəçinin mobil nömrəsi.
 
----
-
-### Addım 2: OTP Doğrulanması (6 rəqəmli kodun yoxlanılması)
+#### B. OTP Doğrulanması (Mərhələ 2)
 * **Endpoint:** `POST /api/auth/register/verify-otp`
-* **Məqsəd:** İstifadəçiyə SMS ilə göndərilən 6 rəqəmli OTP kodun doğruluğunu yoxlamaq.
-* **Sorğu JSON Model:**
 ```json
 {
   "phone_number": "+994519876543",
   "otp_code": "654321"
 }
 ```
-* **Request Parametrləri:**
-  * `phone_number` *(String / Mütləqdir)*: Doğrulanacaq telefon nömrəsi.
-  * `otp_code` *(String / Mütləqdir)*: SMS vasitəsilə göndərilmiş 6 rəqəmli doğrulama kodu (məs: `"654321"`).
 
----
-
-### Addım 3: Qeydiyyatın Tamamlanması (Profil Məlumatları & Şifrə)
+#### C. Qeydiyyatın Tamamlanması (Mərhələ 3)
 * **Endpoint:** `POST /api/auth/register/complete`
-* **Məqsəd:** Addım 2-dən uğurla keçmiş istifadəçinin şəxsi məlumatlarını və şifrəsini verilənlər bazasına yazaraq hesabı aktivləşdirmək.
-* **Sorğu JSON Model:**
 ```json
 {
   "verification_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwaG9uZV9udW1iZXIiOiIrOTk0NTE5ODc2NTQzIn0...",
@@ -100,26 +135,76 @@ Bütün sorğuların (Requests) göndərilmə formatı `Content-Type: applicatio
   "password": "Password123!"
 }
 ```
-* **Request Parametrləri:**
-  * `verification_token` *(String / Mütləqdir)*: OTP doğrulaması uğurla keçdikdə Addım 2-nin Response-undan qayıdan qısamüddətli token. Backend bu tokeni yoxlayaraq istifadəçinin nömrəni təsdiqlədiyini yoxlayır.
-  * `name` *(String / Mütləqdir)*: İstifadəçinin adı.
-  * `surname` *(String / Mütləqdir)*: İstifadəçinin soyadı.
-  * `gender` *(String / Mütləqdir)*: İstifadəçinin cinsiyyəti (Qəbul edilən dəyərlər: `male` və ya `female`).
-  * `birthdate` *(String / Mütləqdir)*: Doğum tarixi, `YYYY-MM-DD` formatında (məs: `"1998-05-18"`).
-  * `password` *(String / Mütləqdir)*: İstifadəçinin şifrəsi (Təhlükəsizlik qaydası: minimum 8 simvol, 1 böyük hərf, 1 kiçik hərf, 1 rəqəm və 1 xüsusi simvol).
 
 ---
 
-### Addım 4: Sürətli Giriş üçün PIN Kod Ayarlanması
+### 2. 🔑 GİRİŞ (LOGIN) SORĞULARI
+
+#### A. Standart Şifrə ilə Giriş (Password Login)
+* **Endpoint:** `POST /api/auth/login`
+```json
+{
+  "phone_number": "+994519876543",
+  "password": "Password123!"
+}
+```
+
+#### B. Sürətli PIN Kod ilə Giriş (PIN Login / PIN Setup)
 * **Endpoint:** `POST /api/auth/login/pin`
-* **Məqsəd:** İstifadəçinin tətbiqə sürətli giriş edə bilməsi üçün 4 rəqəmli PIN kod təyin etməsi.
-* **Sorğu JSON Model:**
 ```json
 {
   "phone_number": "+994519876543",
   "pin_code": "0000"
 }
 ```
+
+---
+
+### 🔄 3. ŞİFRƏNİ UNUTDUM (FORGOT PASSWORD) SORĞULARI
+
+#### A. Şifrə Sıfırlama OTP Sorğusu
+* **Endpoint:** `POST /api/auth/password/forgot`
+```json
+{
+  "phone_number": "+994519876543"
+}
+```
+
+#### B. Şifrə Sıfırlama OTP-sinin Təsdiqlənməsi
+* **Endpoint:** `POST /api/auth/password/verify`
+```json
+{
+  "phone_number": "+994519876543",
+  "otp_code": "654321"
+}
+```
+
+#### C. Yeni Şifrənin Təyin Edilməsi (Reset Complete)
+* **Endpoint:** `POST /api/auth/password/reset`
+```json
+{
+  "verification_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwaG9uZV9udW1iZXIiOiIrOTk0NTE5ODc2NTQzIn0...",
+  "new_password": "NewSecurePassword123!"
+}
+```
+
+---
+
+### 🛠️ 4. DAXİLDƏN ŞİFRƏ DƏYİŞMƏ (CHANGE PASSWORD) SORĞUSU
+
+#### A. Cari və Yeni Şifrə ilə Şifrə Dəyişdirilməsi (Ayarlar Ekranı)
+* **Endpoint:** `POST /api/auth/password/change`
+* **Headers:**
+  ```http
+  Authorization: Bearer <access_token>
+  ```
+* **Sorğu JSON Model:**
+```json
+{
+  "current_password": "OldPassword123!",
+  "new_password": "NewSecurePassword123!"
+}
+```
 * **Request Parametrləri:**
-  * `phone_number` *(String / Mütləqdir)*: Sürətli giriş təyin edilən telefon nömrəsi.
-  * `pin_code` *(String / Mütləqdir)*: İstifadəçinin təyin etdiyi 4 rəqəmli PIN kod (məs: `"0000"`).
+  * `current_password` *(String / Mütləqdir)*: Müştərinin hazırkı cari şifrəsi.
+  * `new_password` *(String / Mütləqdir)*: Müştərinin təyin etmək istədiyi yeni təhlükəsiz şifrə.
