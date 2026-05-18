@@ -1,22 +1,23 @@
-# 🤝 Loya Partner Login (Partnyor Girişi) — Backend API Spec
+# 🤝 Loya Partner Login, Password Reset & Change — Backend API Spec
 
-Bu sənəd **Loya** mobil tətbiqində **Partnyorların (Biznes/Filial sahiblərinin)** giriş (login) axışını və bu zaman backend-ə göndəriləcək **Request (Sorğu) JSON** modellərini əhatə edir.
+Bu sənəd **Loya** tətbiqində **Partnyorların (Biznes/Filial sahiblərinin)** Giriş (Login), Şifrə Sıfırlama (Forgot Password) və Daxildən Şifrə Dəyişmə (Change Password) axışlarını və bu zaman backend-ə göndəriləcək **Request (Sorğu) JSON** modellərini əhatə edir.
 
-> ⚠️ **Qeyd:** Partnyorların qeydiyyatı (register) mobil tətbiqdə yox, birbaşa **Admin Paneldə** həyata keçirilir. Partnyor ilk dəfə tətbiqə Admin Panel tərəfindən verilən keçici şifrə ilə daxil olur.
+> ⚠️ **Qeyd:** Partnyorların qeydiyyatı (register) tətbiqdə yox, **Admin Paneldə** həyata keçirilir. Partnyor ilk dəfə tətbiqə Admin Panel tərəfindən verilən keçici şifrə ilə daxil olur.
 
 ---
 
-## 1. 🔄 Partnyor Giriş API Axış Diaqramı (Sequence Flow)
+## 1. 🔄 Partnyor Giriş & Şifrə Axışları (Sequence Flows)
 
+### AXISH 1: Giriş və Sürətli PIN Girişi (Login & PIN Login)
 ```mermaid
 sequenceDiagram
     autonumber
     actor Partner as Partnyor Tətbiqi (Frontend)
     participant BE as Backend API (Server)
 
-    %% Flow 1: Simple Password Login (First Time or Normal)
+    %% Flow 1: Simple Password Login
     rect rgb(240, 248, 255)
-        Note over Partner, BE: AXISH 1: Şifrə ilə Giriş (İlk və ya Normal Giriş)
+        Note over Partner, BE: AXISH 1.1: Standart Şifrə ilə Giriş
         Partner->{BE}: POST /api/partner/auth/login (application/json)
         Note right of Partner: Request: { phone_number, password }
         
@@ -28,21 +29,50 @@ sequenceDiagram
         end
     end
 
-    %% Flow 2: Set New Password (Only on First Login)
-    rect rgb(245, 255, 250)
-        Note over Partner, BE: AXISH 2: Yeni Şifrənin Təyin Edilməsi (İlk Giriş Zamanı)
-        Partner->{BE}: POST /api/partner/auth/set-password (application/json)
-        Note right of Partner: Headers: Authorization Bearer temp_token<br>Request: { new_password }
-        BE-->>Partner: Response: 200 OK { success, message, access_token }
-    end
-
-    %% Flow 3: Quick PIN Login
+    %% Flow 2: Quick PIN Login
     rect rgb(255, 240, 245)
-        Note over Partner, BE: AXISH 3: Sürətli PIN Kod ilə Giriş (Növbəti Girişlər)
+        Note over Partner, BE: AXISH 1.2: Sürətli PIN Kod ilə Giriş
         Partner->{BE}: POST /api/partner/auth/login/pin (application/json)
         Note right of Partner: Request: { phone_number, pin_code }
         BE-->>Partner: Response: 200 OK { success, access_token, partner_profile }
     end
+```
+
+### AXISH 2: Şifrəni Unutdum (Forgot Password)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Partner as Partnyor Tətbiqi (Frontend)
+    participant BE as Backend API (Server)
+    participant SMS as SMS Gateway
+
+    Note over Partner, BE: Şifrəmi Unutdum Axışı (Giriş Ekranında)
+    Partner->{BE}: POST /api/partner/auth/password/forgot (application/json)
+    Note right of Partner: Request: { phone_number }
+    BE-->>SMS: OTP SMS Kod göndər
+    SMS-->>Partner: 6 rəqəmli OTP çatır (məs: 654321)
+    BE-->>Partner: Response: 200 OK { success, expires_in }
+
+    Partner->{BE}: POST /api/partner/auth/password/verify (application/json)
+    Note right of Partner: Request: { phone_number, otp_code }
+    BE-->>Partner: Response: 200 OK { success, verification_token }
+
+    Partner->{BE}: POST /api/partner/auth/password/reset (application/json)
+    Note right of Partner: Request: { verification_token, new_password }
+    BE-->>Partner: Response: 200 OK { success, message }
+```
+
+### AXISH 3: Daxildən Şifrə Dəyişmə (Set / Change Password)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Partner as Partnyor Tətbiqi (Ayarlar)
+    participant BE as Backend API (Server)
+
+    Note over Partner, BE: Daxildə Şifrə Dəyişmə (SetPasswordScreen)
+    Partner->{BE}: POST /api/partner/auth/password/change (application/json)
+    Note right of Partner: Headers: Authorization Bearer access_token<br>Request: { current_password, new_password }
+    BE-->>Partner: Response: 200 OK { success, message }
 ```
 
 ---
@@ -51,11 +81,10 @@ sequenceDiagram
 
 Bütün sorğuların (Requests) göndərilmə formatı `Content-Type: application/json` olmalıdır.
 
-### 🔑 GİRİŞ (LOGIN) SORĞULARI
+### 🔑 BÖLMƏ 1: GİRİŞ (LOGIN) SORĞULARI
 
 #### A. Şifrə ilə Giriş (İlk və ya Normal Giriş)
 * **Endpoint:** `POST /api/partner/auth/login`
-* **Məqsəd:** Partnyorun telefon nömrəsi və şifrəsi (Admin Panel tərəfindən verilən keçici şifrə və ya öz təyin etdiyi şifrə) ilə giriş etməsi.
 * **Sorğu JSON Model:**
 ```json
 {
@@ -71,7 +100,6 @@ Bütün sorğuların (Requests) göndərilmə formatı `Content-Type: applicatio
 
 #### B. Sürətli PIN Kod ilə Giriş (PIN Login)
 * **Endpoint:** `POST /api/partner/auth/login/pin`
-* **Məqsəd:** Partnyorun hər dəfə şifrə yazmadan, tətbiqi sürətli açmaq üçün təyin etdiyi 4 rəqəmli PIN kod ilə giriş etməsi.
 * **Sorğu JSON Model:**
 ```json
 {
@@ -85,20 +113,59 @@ Bütün sorğuların (Requests) göndərilmə formatı `Content-Type: applicatio
 
 ---
 
-### 🔄 ŞİFRƏ TƏYİNİ (YALNIZ İLK GİRİŞ ZAMANI)
+### 🔄 BÖLMƏ 2: ŞİFRƏNİ UNUTDUM (FORGOT PASSWORD) SORĞULARI
 
-#### A. Yeni Şifrənin Təyin Edilməsi (First-time Set Password)
-* **Endpoint:** `POST /api/partner/partner/set-password`
-* **Məqsəd:** İlk dəfə keçici şifrə ilə daxil olan partnyorun özünə yeni və təhlükəsiz şifrə təyin etməsi.
+#### A. Şifrə Sıfırlama OTP Sorğusu
+* **Endpoint:** `POST /api/partner/auth/password/forgot`
+* **Sorğu JSON Model:**
+```json
+{
+  "phone_number": "+994519876543"
+}
+```
+
+---
+
+#### B. Şifrə Sıfırlama OTP-sinin Təsdiqlənməsi
+* **Endpoint:** `POST /api/partner/auth/password/verify`
+* **Sorğu JSON Model:**
+```json
+{
+  "phone_number": "+994519876543",
+  "otp_code": "654321"
+}
+```
+
+---
+
+#### C. Yeni Şifrənin Təyin Edilməsi (Reset Complete)
+* **Endpoint:** `POST /api/partner/auth/password/reset`
+* **Sorğu JSON Model:**
+```json
+{
+  "verification_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwaG9uZV9udW1iZXIiOiIrOTk0NTE5ODc2NTQzIn0...",
+  "new_password": "NewSecurePassword123!"
+}
+```
+
+---
+
+### 🛠️ BÖLMƏ 3: DAXİLDƏN ŞİFRƏ DƏYİŞMƏ (CHANGE PASSWORD) SORĞUSU
+
+#### A. Cari və Yeni Şifrə ilə Şifrə Dəyişdirilməsi
+* **Endpoint:** `POST /api/partner/auth/password/change`
+* **Məqsəd:** Sistemə daxil olmuş partnyorun profil tənzimləmələrindən cari şifrəsini doğrulayıb yeni şifrə təyin etməsi.
 * **Headers:**
   ```http
-  Authorization: Bearer <temp_token>
+  Authorization: Bearer <access_token>
   ```
 * **Sorğu JSON Model:**
 ```json
 {
-  "new_password": "PartnerSecurePassword123!"
+  "current_password": "OldPassword123!",
+  "new_password": "NewSecurePassword123!"
 }
 ```
 * **Request Parametrləri:**
-  * `new_password` *(String / Mütləqdir)*: Partnyorun özü üçün təyin etdiyi yeni güclü şifrə.
+  * `current_password` *(String / Mütləqdir)*: Partnyorun hazırkı cari şifrəsi.
+  * `new_password` *(String / Mütləqdir)*: Təyin etmək istədiyi yeni təhlükəsiz şifrə.
