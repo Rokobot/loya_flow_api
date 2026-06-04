@@ -1,5 +1,7 @@
 # 🕷️ Backend API — Issue Log
 
+<img width="736" height="460" alt="_ (1)" src="https://github.com/user-attachments/assets/b36a598c-9732-4f39-82d8-b236daedae95" />
+
 > **Auth Service** · `62.171.172.254:8083` · Hazırlayan: **Rafet** → Backend Team
 
 ---
