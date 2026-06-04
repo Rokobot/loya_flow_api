@@ -1,0 +1,131 @@
+
+🕷️
+Backend API Issue Log
+Auth Service · Rafet → Backend Team · Hər kart açılır
+4
+Kritik Bug
+4
+Yeni Endpoint
+2
+Auth Fix
+2
+PIN API
+BUG-LAR — DÜZƏLDILMƏLI
+1
+Login — yanlış credentials-də 500 qaytarır
+Critical
+
+MÖVCUD
+Yanlış nömrə/şifrədə HTTP 500 atır
+OLMALIDIR
+HTTP 200 + success: false + mesaj
+POST /api/auth/login
+
+❌  HTTP 500  BadHttpRequestException:
+    Telefon nömrəsi və ya şifrə yanlışdır.
+
+✅  HTTP 200 OK
+    { "success": false,
+      "message": "Telefon nömrəsi və ya şifrə yanlışdır." }
+Fix: BadHttpRequestException global handler-də tutulmalı, 500-ə düşməməlidir. Validation xətaları 200 + error flag ilə qaytarılmalıdır.
+2
+Login — ilk sorğuda 500, ikincidə success
+High
+
+TƏSVIR
+Credentials doğru olsa belə ilk sorğu fail edir. Flutter catch-dəki ikinci try uğurlu olur. Race condition və ya cold start problemidir.
+Fix: DB connection pool hazırlığını yoxlayın. Middleware sırasını nəzərdən keçirin. Server start-da Redis / cache / token store tam init olmaya bilər — health check əlavə edin.
+3
+Eyni parol yenidən reset edilə bilir
+Medium
+
+PROBLEM
+Password reset-də mövcud parol ilə eyni parol set etmək mümkündür. Güvənlik riskidir.
+❌  { "new_password": "mövcud_parol" }  → 200 OK  (olmamalı)
+✅  HTTP 200  { "success": false,
+      "message": "Yeni parol köhnə ilə eyni ola bilməz." }
+Fix: Yeni parolu hash-ləyib mövcud hash ilə müqayisə edin. Eyni olduqda 400 qaytarın.
+4
+Register — mövcud nömrə üçün 500 atır
+Critical
+
+MÖVCUD
+Artıq qeydiyyatlı nömrədə HTTP 500
+OLMALIDIR
+HTTP 200 + success: false + mesaj
+POST /api/auth/register
+
+❌  HTTP 500  BadHttpRequestException:
+    Bu nömrə ilə istifadəçi artıq qeydiyyatdan keçib.
+
+✅  HTTP 200 OK
+    { "success": false,
+      "message": "Bu nömrə ilə istifadəçi artıq qeydiyyatdan keçib." }
+Fix: #1 ilə eynidir. Controller-də duplicate check əvvəlcədən aparılmalı, exception-a düşmədən 200 + error qaytarılmalıdır.
+YENI ENDPOINTLƏR
+5
+PUT
+Müştəri nömrə dəyişmə API
+New
+
+PUT /api/customer/change-phone
+Authorization: Bearer {token}
+Sahə	Tip	Tələb	Açıqlama
+current_phone	string	✱	Mövcud nömrə
+new_phone	string	✱	Yeni nömrə
+otp_code	string	✱	Yeni nömrəyə göndərilən OTP
+✅  { "success": true, "message": "Nömrə uğurla dəyişdirildi." }
+❌  { "success": false, "message": "OTP yanlışdır və ya müddəti bitib." }
+6
+GET
+Müştəri məlumatları API
+New
+
+GET /api/customer/me
+Authorization: Bearer {token}
+
+✅  HTTP 200 OK
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "full_name": "Əli Həsənov",
+    "phone": "+994501234567",
+    "email": "ali@example.com",
+    "created_at": "2024-01-01T00:00:00Z",
+    "is_verified": true
+  }
+}
+7
+POST
+PIN doğrulama API
+New
+
+POST /api/auth/pin/verify
+Sahə	Tip	Tələb	Açıqlama
+phone	string	✱	Telefon nömrəsi
+pin	string	✱	4–6 rəqəmli PIN
+✅  { "success": true, "token": "eyJ..." }
+❌  { "success": false, "message": "PIN yanlışdır." }
+❌  { "success": false, "message": "Çox cəhd. 5 dəq. sonra yenidən cəhd edin." }
+8
+POST
+PIN sıfırlama (Forget PIN) — 2 addım
+New
+
+// Addım 1 — OTP göndər
+POST /api/auth/pin/forgot
+{ "phone": "+994501234567" }
+→ { "success": true, "message": "OTP göndərildi." }
+
+// Addım 2 — yeni PIN set et
+POST /api/auth/pin/reset
+{
+  "phone": "+994501234567",
+  "otp_code": "123456",
+  "new_pin": "4321",
+  "new_pin_confirmation": "4321"
+}
+→ { "success": true, "message": "PIN uğurla yeniləndi." }
+→ { "success": false, "message": "OTP yanlışdır / bitib." }
+OTP müddəti: 5 dəqiqə. Yeni PIN köhnə ilə eyni ola bilməz (#3 fix ilə uyğun).
