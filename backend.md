@@ -1,363 +1,224 @@
-<!DOCTYPE html>
-<html lang="az">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The Backend Chronicles: Daily Bugle Report</title>
-    <style>
-        :root {
-            --bg-color: #0a0a0c;
-            --surface-color: #121216;
-            --border-color: #262630;
-            --text-primary: #e4e4e7;
-            --text-secondary: #a1a1aa;
-            --spider-red: #dc2626;
-            --spider-blue: #2563eb;
-            --code-bg: #18181b;
-        }
+Backend API Issues
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
 
-        body {
-            background-color: var(--bg-color);
-            color: var(--text-primary);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            line-height: 1.6;
-            padding: 2rem 1rem;
-        }
+🕷️
+Backend API Issue Log
+Auth Service · Rafet → Backend Team
+🕸️ Auth Service
+📍 62.171.172.254:8083
+📅 2025
+4
+Kritik Bug
+4
+Yeni Endpoint
+2
+Auth Fix
+2
+PIN API
+BUG-LAR — DÜZƏLDILMƏLI
+1
+Login — yanlış credentials-də 500 qaytarır, 200 olmalıdır
+Critical
+POST /api/auth/login
+⌄
 
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            position: relative;
-        }
+⚡ MÖVCUD DAVRANIŞ
+Telefon nömrəsi və ya şifrə yanlış olduqda server HTTP 500 Internal Server Error qaytarır. Flutter tərəf DioExceptionType.badResponse ilə crash edir.
+✅ GÖZLƏNILƏN DAVRANIŞ
+Sorğu uğurla işlənməli, HTTP 200 OK + JSON body qaytarılmalıdır. success: false flag-i ilə istifadəçi dostu mesaj daxil olmalıdır.
+📱 FLUTTER LOG (MÖVCUD)
+╔╣ DioError ║ Status: 500 Internal Server Error ║ Time: 557 ms
+║ http://62.171.172.254:8083/api/auth/login
+╔ DioExceptionType.badResponse
+║ BadHttpRequestException: Telefon nömrəsi və ya şifrə yanlışdır. 
+// ❌ Mövcud response
+HTTP 500 Internal Server Error
+AuthService.Application.Exceptions.BadHttpRequestException:
+  Telefon nömrəsi və ya şifrə yanlışdır.
 
-        /* Spiderman Web Overlay Texture (Subtle/Industrial) */
-        .container::before {
-            content: "";
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: 
-                radial-gradient(circle at 50% 0%, transparent 98%, var(--border-color) 100%) 0 0 / 40px 40px,
-                linear-gradient(90deg, transparent 49%, var(--border-color) 50%, transparent 51%) 0 0 / 40px 40px;
-            opacity: 0.05;
-            pointer-events: none;
-            z-index: -1;
-        }
+// ✅ Olmalıdır
+HTTP 200 OK
+{
+  "success": false,
+  "message": "Telefon nömrəsi və ya şifrə yanlışdır."
+}
+🔧 Fix: BadHttpRequestException tipini global exception handler-də tutun. Bu exception HTTP 500-ə çevrilməməli, 200 OK + success: false + mesaj ilə qaytarılmalıdır. ExceptionMiddleware və ya GlobalExceptionHandler-də bu tipi ayrıca handle edin. 
+2
+Login — ilk sorğuda 500, ikinci sorğuda success olur
+High
+POST /api/auth/login · Race condition / cold start
+⌄
 
-        header {
-            border-bottom: 2px solid var(--spider-red);
-            padding-bottom: 1.5rem;
-            margin-bottom: 2.5rem;
-        }
+📋 TƏSVIR
+Credentials tamamilə doğru olsa belə, ilk login sorğusu 500 qaytarır. Flutter tərəfdə catch blokunda ikinci try işə düşür və success olur. Bu davranış server tərəfdəki bir initialization probleminə işarə edir.
+SƏBƏB 1
+DB connection pool ilk sorğuda hazır olmaya bilər (cold start).
+SƏBƏB 2
+Middleware sırası: token/session init middleware ilk sorğuda fail edə bilər.
+SƏBƏB 3
+Redis / cache / token store server start-da tam init olmadan sorğu gəlir.
+🔧 Fix tövsiyələri: Server başladıqda bütün servislərin (DB, Redis, cache, token store) hazır olduğunu yoxlamaq üçün health check endpoint əlavə edin. Middleware sırasını nəzərdən keçirin. Connection pool warmup tətbiq edin. 
+3
+Eyni parol yenidən reset edilə bilir
+Medium
+POST /api/auth/reset-password · Güvənlik problemi
+⌄
 
-        h1 {
-            font-size: 2rem;
-            font-weight: 900;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-primary);
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
+🚨 PROBLEM
+Password reset endpoint-ində mövcud parol ilə eyni parolu yenidən set etmək mümkündür. Bu güvənlik riskidir — istifadəçi real mənada parolunu dəyişməmiş olur.
+✅ GÖZLƏNILƏN
+Yeni parol köhnə parol ilə eyni olduqda 400 Bad Request + istifadəçi dostu xəta mesajı qaytarılmalıdır.
+// ❌ Mövcud — eyni parol qəbul edilir
+POST /api/auth/reset-password
+{ "new_password": "mövcud_parol" }
+→ HTTP 200 OK  (yanlışdır)
 
-        h1 span {
-            color: var(--spider-red);
-        }
+// ✅ Olmalıdır
+HTTP 200 OK
+{
+  "success": false,
+  "message": "Yeni parol köhnə parolla eyni ola bilməz."
+}
+🔧 Fix: Reset əməliyyatında yeni parolu hash-ləyib mövcud hash ilə password_verify() / BCrypt.Verify() ilə müqayisə edin. Eyni olduqda success: false + mesaj qaytarın. Bu yoxlama həm #7 PIN reset-ə də tətbiq edilməlidir. 
+4
+Register — mövcud nömrə üçün 500 qaytarır
+Critical
+POST /api/auth/register
+⌄
 
-        blockquote {
-            margin-top: 1rem;
-            padding-left: 1rem;
-            border-left: 3px solid var(--spider-blue);
-            color: var(--text-secondary);
-            font-style: italic;
-        }
+📱 FLUTTER LOG (MÖVCUD)
+║ AuthService.Application.Exceptions.BadHttpRequestException:
+║ Bu nömrə ilə istifadəçi artıq qeydiyyatdan keçib 
+// ❌ Mövcud
+HTTP 500 Internal Server Error
+BadHttpRequestException: Bu nömrə ilə istifadəçi artıq qeydiyyatdan keçib.
 
-        h2 {
-            font-size: 1.25rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-primary);
-            margin: 2.5rem 0 1.2rem 0;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
+// ✅ Olmalıdır
+HTTP 200 OK
+{
+  "success": false,
+  "message": "Bu nömrə ilə istifadəçi artıq qeydiyyatdan keçib."
+}
+🔧 Fix: #1 ilə eyni kök problem — BadHttpRequestException global handler-də düzgün handle edilmir. Register controller-də nömrə mövcudluğunu əvvəlcədən DB-dən yoxlayın, exception-a düşmədən 200 + success: false qaytarın. 
+YENI ENDPOINTLƏR — ƏLAVƏ EDILMƏLI
+5
+PUT
+Müştəri nömrə dəyişmə API
+New Endpoint
+/api/customer/change-phone · Auth required
+⌄
 
-        h2::before {
-            content: "//";
-            color: var(--spider-red);
-            font-weight: 900;
-        }
+PUT /api/customer/change-phone
+Authorization: Bearer {token}
+SAHƏ	TIP	TƏLƏB	AÇIQLAMA
+current_phone	string	✱ Məcburi	İstifadəçinin mövcud telefon nömrəsi
+new_phone	string	✱ Məcburi	Yeni telefon nömrəsi (format: +994XXXXXXXXX)
+otp_code	string	✱ Məcburi	Yeni nömrəyə göndərilən 6 rəqəmli OTP
+// ✅ Success
+HTTP 200 OK
+{ "success": true, "message": "Nömrə uğurla dəyişdirildi." }
 
-        .card-list {
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-        }
+// ❌ OTP xəta
+{ "success": false, "message": "OTP yanlışdır və ya müddəti bitib." }
 
-        .card {
-            background-color: var(--surface-color);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            padding: 1.5rem;
-            transition: border-color 0.2s ease;
-        }
+// ❌ Nömrə artıq mövcuddur
+{ "success": false, "message": "Bu nömrə artıq istifadədədir." }
+📝 Qeyd: OTP göndərmə üçün əvvəlcə POST /api/auth/send-otp sorğusu atılmalıdır. Nömrə dəyişdikdən sonra mövcud token yenilənməlidir (yeni nömrə ilə yeni token qaytarın). 
+6
+GET
+İstifadəçi məlumatlarını alma API
+New Endpoint
+/api/customer/me · Auth required
+⌄
 
-        .card:hover {
-            border-color: #3f3f46;
-        }
+GET /api/customer/me
+Authorization: Bearer {token}
+Content-Type: application/json
+// ✅ Success response
+HTTP 200 OK
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "full_name": "Əli Həsənov",
+    "phone": "+994501234567",
+    "email": "ali@example.com",
+    "profile_image": "https://...",
+    "created_at": "2024-01-01T00:00:00Z",
+    "is_verified": true,
+    "has_pin": true
+  }
+}
 
-        .card-header {
-            display: flex;
-            align-items: baseline;
-            justify-content: space-between;
-            margin-bottom: 1rem;
-            border-bottom: 1px dashed var(--border-color);
-            padding-bottom: 0.5rem;
-        }
+// ❌ Token invalid / expired
+{ "success": false, "message": "Unauthorized." }
+📝 Qeyd: has_pin sahəsi Flutter tərəfin PIN ekranına yönləndirmə qərarı üçün lazımdır. Token refresh lazım olduqda 401 qaytarın, 500 yox. 
+7
+POST
+PIN doğrulama API
+New Endpoint
+/api/auth/pin/verify · Brute-force qoruma daxil
+⌄
 
-        .card-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: var(--text-primary);
-        }
+POST /api/auth/pin/verify
+Content-Type: application/json
+SAHƏ	TIP	TƏLƏB	AÇIQLAMA
+phone	string	✱ Məcburi	İstifadəçi telefon nömrəsi
+pin	string	✱ Məcburi	4–6 rəqəmli PIN kod
+// ✅ Uğurlu doğrulama
+HTTP 200 OK
+{
+  "success": true,
+  "token": "eyJhbGciOiJIUzI1NiIsInR5...",
+  "user": { "id": 1, "full_name": "Əli Həsənov" }
+}
 
-        .card-meta {
-            font-family: monospace;
-            font-size: 0.85rem;
-            color: var(--spider-blue);
-            background: rgba(37, 99, 235, 0.1);
-            padding: 0.1rem 0.4rem;
-            border-radius: 2px;
-        }
+// ❌ Yanlış PIN
+{ "success": false, "message": "PIN yanlışdır.", "attempts_left": 4 }
 
-        .card-meta.bug {
-            color: var(--spider-red);
-            background: rgba(220, 38, 38, 0.1);
-        }
+// ❌ Çox sayda yanlış cəhd
+{
+  "success": false,
+  "message": "Çox sayda yanlış cəhd. 5 dəqiqə sonra yenidən cəhd edin.",
+  "locked_until": "2024-01-01T12:05:00Z"
+}
+📝 Brute-force qoruma: Ardıcıl 5 yanlış cəhddən sonra hesab müvəqqəti kilidlənməlidir (locked_until qaytarın). attempts_left sahəsi Flutter UI üçün faydalıdır. 
+8
+POST
+PIN sıfırlama — Forget PIN
+New Endpoint
+/api/auth/pin/forgot + /api/auth/pin/reset · 2 addımlı flow
+⌄
 
-        .field {
-            margin-bottom: 0.75rem;
-            font-size: 0.95rem;
-        }
+Addım 1 — OTP göndər
+→
+Addım 2 — Yeni PIN set et
+// ── Addım 1: OTP göndər ──────────────────────────
+POST /api/auth/pin/forgot
+{ "phone": "+994501234567" }
 
-        .field-label {
-            color: var(--text-secondary);
-            font-weight: 500;
-            display: inline-block;
-            width: 90px;
-        }
+→ HTTP 200 OK
+{ "success": true, "message": "OTP nömrənizə göndərildi.", "expires_in": 300 }
 
-        .field-value {
-            color: var(--text-primary);
-        }
+// ── Addım 2: Yeni PIN set et ─────────────────────
+POST /api/auth/pin/reset
+{
+  "phone": "+994501234567",
+  "otp_code": "123456",
+  "new_pin": "4321",
+  "new_pin_confirmation": "4321"
+}
 
-        pre {
-            background-color: var(--code-bg);
-            border: 1px solid var(--border-color);
-            padding: 1rem;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 0.85rem;
-            overflow-x: auto;
-            margin: 0.75rem 0;
-            color: #d4d4d8;
-        }
+→ HTTP 200 OK
+{ "success": true, "message": "PIN uğurla yeniləndi." }
 
-        .resolution {
-            margin-top: 1rem;
-            padding-top: 0.75rem;
-            border-top: 1px solid var(--border-color);
-            font-size: 0.95rem;
-        }
+→ OTP yanlış / müddəti bitib:
+{ "success": false, "message": "OTP yanlışdır və ya müddəti bitib." }
 
-        .resolution-title {
-            color: #10b981;
-            font-weight: 600;
-            text-transform: uppercase;
-            font-size: 0.8rem;
-            letter-spacing: 0.05em;
-            margin-bottom: 0.25rem;
-        }
+→ PIN uyğun deyil:
+{ "success": false, "message": "PIN-lər uyğun gəlmir." }
 
-        .diagram-container {
-            background-color: var(--surface-color);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            padding: 1.5rem;
-            font-family: monospace;
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            overflow-x: auto;
-            white-space: pre;
-            line-height: 1.4;
-        }
-
-        footer {
-            margin-top: 4rem;
-            border-top: 1px solid var(--border-color);
-            padding-top: 1.5rem;
-            text-align: center;
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-        }
-
-        footer blockquote {
-            border: none;
-            padding: 0;
-            display: inline;
-        }
-    </style>
-</head>
-<body>
-
-    <div class="container">
-        <header>
-            <h1>🕸️ THE BACKEND CHRONICLES: <span>DAILY BUGLE REPORT</span></h1>
-            <blockquote>
-                "With great power comes great responsibility." — System logs, active anomalies, and API architecture status updates. Secure node connection established.
-            </blockquote>
-        </header>
-
-        <h2>🛑 ANOMALY TRACKING (BUG REQUISITIONS)</h2>
-        
-        <div class="card-list">
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-title">01. Authentication Flow / HTTP Status Mismatch</div>
-                    <div class="card-meta bug">VECTOR: /api/auth/login</div>
-                </div>
-                <div class="field">
-                    <span class="field-label">Observed:</span>
-                    <span class="field-value">System returns <code>500 Internal Server Error</code> upon invalid credentials (incorrect phone number or password).</span>
-                </div>
-                <pre>flutter: ╔╣ DioError ║ Status: 500 Internal Server Error ║ Time: 557 ms
-flutter: ║ http://62.171.172.254:8083/api/auth/login
-flutter: ║ AuthService.Application.Exceptions.BadHttpRequestException: Telefon nömrəsi və ya şifrə yanlışdır.</pre>
-                <div class="resolution">
-                    <div class="resolution-title">Required Resolution</div>
-                    <p>Intercept exception at the gateway. Switch status code from <code>500</code> to <code>200 OK</code>. Encapsulate the raw <code>BadHttpRequestException</code> string into a structured error message object within the response body.</p>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-title">02. Sequential Request Loop Failure</div>
-                    <div class="card-meta bug">VECTOR: LOGIN HANDSHAKE</div>
-                </div>
-                <div class="field">
-                    <span class="field-label">Observed:</span>
-                    <span class="field-value">The primary network request consistently fails with a <code>500</code> error code even when credentials match perfectly. The handshake is only established on the subsequent attempt inside the <code>catch</code> block's retry logic.</span>
-                </div>
-                <div class="resolution">
-                    <div class="resolution-title">Required Resolution</div>
-                    <p>Debug the lifecycle of the initial connection pool. Eliminate the mandatory first-fail behavior to prevent unnecessary execution overhead.</p>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-title">03. Password Reset Validation Loop</div>
-                    <div class="card-meta bug">VECTOR: CREDENTIAL MUTATION</div>
-                </div>
-                <div class="field">
-                    <span class="field-label">Observed:</span>
-                    <span class="field-value">The endpoint permits users to overwrite their existing password with the exact same string value.</span>
-                </div>
-                <div class="resolution">
-                    <div class="resolution-title">Required Resolution</div>
-                    <p>Implement a comparison layer. Reject requests where <code>NewPassword == OldPassword</code> to enforce cryptographic freshness.</p>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-title">04. Identity Duplication Conflict</div>
-                    <div class="card-meta bug">VECTOR: REGISTRATION GATE</div>
-                </div>
-                <div class="field">
-                    <span class="field-label">Observed:</span>
-                    <span class="field-value">System throws an unhandled <code>500 Internal Server Error</code> when a user attempts to sign up with an existing registered phone number.</span>
-                </div>
-                <pre>flutter: ║ AuthService.Application.Exceptions.BadHttpRequestException: Bu nömrə ilə istifadəçi artıq qeydiyyatdan keçib</pre>
-                <div class="resolution">
-                    <div class="resolution-title">Required Resolution</div>
-                    <p>Catch the conflict exception early. Downgrade the network status code to a graceful client-side format and pass the warning message safely.</p>
-                </div>
-            </div>
-        </div>
-
-        <h2>⚡ ENDPOINT EXPANSION (NEW ARCHITECTURE)</h2>
-        
-        <div class="card-list">
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-title">05. Customer Identifier Mutation</div>
-                    <div class="card-meta">TARGET: PUT /api/customer/change-number</div>
-                </div>
-                <div class="field">
-                    <span class="field-label">Scope:</span>
-                    <span class="field-value">Dedicated API endpoint allowing authenticated customers to securely update their primary registration phone number. Must include validation parameters.</span>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-title">06. Identity Retrieval Node</div>
-                    <div class="card-meta">TARGET: GET /api/user/info</div>
-                </div>
-                <div class="field">
-                    <span class="field-label">Scope:</span>
-                    <span class="field-value">Secure endpoint dedicated to pulling profile datasets, authorization levels, and personal configurations for the active session user.</span>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-title">07. PIN Verification Gate</div>
-                    <div class="card-meta">TARGET: POST /api/auth/pin-verify</div>
-                </div>
-                <div class="field">
-                    <span class="field-label">Scope:</span>
-                    <span class="field-value">Dedicated cryptographic check endpoint to validate short-code entry strings before granting access to critical application states.</span>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-title">08. PIN Recovery Routine</div>
-                    <div class="card-meta">TARGET: POST /api/auth/forget-pin</div>
-                </div>
-                <div class="field">
-                    <span class="field-label">Scope:</span>
-                    <span class="field-value">Specialized logic pathway to safely trigger recovery tokens or reset protocols for forgotten security PIN codes.</span>
-                </div>
-            </div>
-        </div>
-
-        <h2>📡 SYSTEM DIAGNOSTICS</h2>
-        <div class="diagram-container">[WEB-SLINGING TRACE]
-🌐 Client Node ---> (Request) ---> [ API Gateway ]
-                                          |
-                                  { Status Check }
-                                          |
-               [500 Error] ❌ <-----------+-----------> ✅ [200 OK Response]
-         (Needs Re-routing)                               (Expected Behavior)</div>
-
-        <footer>
-            <blockquote>Status: Monitoring network traffic... Keep the web fluid filled and the compiler clean.</blockquote>
-        </footer>
-    </div>
-
-</body>
-</html>
+→ Köhnə PIN ilə eyni:
+{ "success": false, "message": "Yeni PIN köhnə ilə eyni ola bilməz." }
+📝 Qeydlər: OTP müddəti 5 dəqiqə (300 saniyə). expires_in sahəsi Flutter countdown timer üçün lazımdır. Yeni PIN köhnə ilə eyni ola bilməz (#3 fix ilə uyğun). PIN minimum 4, maksimum 6 rəqəm olmalıdır. 
+🕸️ Auth Service · 4 Bug · 4 New Endpoint · Backend Team 
